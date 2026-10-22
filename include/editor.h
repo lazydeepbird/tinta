@@ -49,6 +49,30 @@ void editorTextDragCancel(App& app, HWND hwnd);
 void renderEditor(App& app, float editorWidth);
 // Screen-space caret origin shared by rendering and IME anchoring.
 bool editorCaretPoint(App& app, D2D1_POINT_2F& point);
+// Screen-space origin of an arbitrary buffer offset (same coordinate space as
+// editorCaretPoint). Used to anchor the IME candidate window at the start of
+// the composition rather than at its caret.
+bool editorPointForPos(App& app, size_t pos, D2D1_POINT_2F& point);
+// Height of one source line (row) in pixels, 0 when there is no editor font.
+float editorLineHeightPx(const App& app);
+
+// --- IME composition primitives (ime.cpp drives these) ---
+// Splice text into the buffer with no undo, dirty, or cursor side effects;
+// rebuilds the line index and invalidates the layout cache.
+void editorImeSplice(App& app, size_t pos, size_t oldLen,
+                     const std::wstring& text);
+// Record a committed composition as ONE edit: an Insert (coalescing like
+// typed characters) or, when it replaced a selection, a Replace that Undo
+// turns back into that selection. Marks the buffer dirty.
+void editorImeRecordCommit(App& app, size_t pos, const std::wstring& removed,
+                           const std::wstring& inserted, size_t cursorBefore,
+                           size_t selStartBefore, size_t selEndBefore,
+                           bool hadSelection);
+// Scroll the caret into view and repaint after a composition change.
+void editorImeRefresh(App& app);
+// Undo/redo entry points for tests and IME-aware callers
+void editorUndoForTest(App& app);
+void editorRedoForTest(App& app);
 
 // Re-enter edit mode from a parked tab buffer (tabs.cpp), restoring the
 // dirty flag, scroll, and caret the switch-away captured

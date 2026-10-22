@@ -1,5 +1,6 @@
 #include "frontmatter_ui.h"
 #include "editor.h"
+#include "ime.h"
 #include "document.h"
 #include "drafts.h"
 #include "signals.h"
@@ -554,6 +555,16 @@ bool editorCaretPoint(App& app, D2D1_POINT_2F& point) {
                               app.editorCaretUpstreamPos == app.editorCursorPos, point);
 }
 
+float editorLineHeightPx(const App& app) {
+    return app.editorTextFormat ? app.editorTextFormat->GetFontSize() * 1.5f
+                                : 0.0f;
+}
+
+// Same mapping as editorCaretPoint for an explicit offset (never upstream)
+bool editorPointForPos(App& app, size_t pos, D2D1_POINT_2F& point) {
+    return editorCaretPointAt(app, std::min(pos, app.editorText.size()), false, point);
+}
+
 // --- Undo/Redo ---
 
 // Actions pushed while a scope is alive undo and redo as one step: an
@@ -646,6 +657,9 @@ static void editorUndo(App& app) {
     if (app.undoStack.empty()) return;
     app.editorExtraCarets.clear();
     const unsigned group = app.undoStack.back().group;
+    // A Replace that overwrote a selection (IME composition) gives it back
+    bool restoreSelection = false;
+    size_t selStart = 0, selEnd = 0;
     do {
         auto action = app.undoStack.back();
         app.undoStack.pop_back();
@@ -660,10 +674,19 @@ static void editorUndo(App& app) {
             app.editorText.insert(action.position, action.text);
         }
         app.editorCursorPos = action.cursorBefore;
+        restoreSelection =
+            action.type == App::EditAction::Replace && action.hadSelection;
+        selStart = action.selStart;
+        selEnd = action.selEnd;
         app.redoStack.push_back(action);
     } while (group != 0 && !app.undoStack.empty() && app.undoStack.back().group == group);
     rebuildLineStarts(app);
     app.editorHasSelection = false;
+    if (restoreSelection) {
+        app.editorSelStart = selStart;
+        app.editorSelEnd = selEnd;
+        app.editorHasSelection = selStart != selEnd;
+    }
     app.editorDesiredCol = -1;
 }
 
@@ -1403,6 +1426,44 @@ void editorMarkDirtyAndReparse(App& app) {
     editorReparse(app);
 }
 
+// --- IME composition primitives (see ime.cpp for the state machine) ---
+
+void editorImeSplice(App& app, size_t pos, size_t oldLen,
+                     const std::wstring& text) {
+    pos = std::min(pos, app.editorText.size());
+    oldLen = std::min(oldLen, app.editorText.size() - pos);
+    app.editorText.replace(pos, oldLen, text);
+    rebuildLineStarts(app);  // also drops the layout cache and row metrics
+    app.editorRowMetricsWidth = -1.0f;
+    app.editorDesiredCol = -1;
+}
+
+void editorImeRecordCommit(App& app, size_t pos, const std::wstring& removed,
+                           const std::wstring& inserted, size_t cursorBefore,
+                           size_t selStartBefore, size_t selEndBefore,
+                           bool hadSelection) {
+    size_t after = pos + inserted.size();
+    if (removed.empty()) {
+        pushUndo(app, App::EditAction::Insert, pos, inserted, cursorBefore, after);
+    } else {
+        pushReplaceUndo(app, pos, removed, inserted, cursorBefore, after);
+        auto& action = app.undoStack.back();
+        action.hadSelection = hadSelection;
+        action.selStart = selStartBefore;
+        action.selEnd = selEndBefore;
+    }
+    scheduleReparse(app);
+}
+
+void editorImeRefresh(App& app) {
+    resetCursorBlink(app);
+    editorEnsureCursorVisible(app);
+    if (app.hwnd) InvalidateRect(app.hwnd, nullptr, FALSE);
+}
+
+void editorUndoForTest(App& app) { editorUndo(app); }
+void editorRedoForTest(App& app) { editorRedo(app); }
+
 void editorReparse(App& app, bool force) {
     KillTimer(app.hwnd, TIMER_EDITOR_REPARSE);
     if (!app.editMode) return;
@@ -1703,6 +1764,7 @@ void enterRecoveredDraft(App& app, HWND hwnd, const std::string& content,
 }
 
 void exitEditMode(App& app) {
+    imeCommitPending(app);
     // An open table cell commits before the mode question is asked (#148)
     tableEditCommit(app);
     if (app.editorDirty) {
@@ -2086,6 +2148,9 @@ void renderQuickNoteEmptyState(App& app) {
 // The destination was checked or explicitly confirmed by the user.
 // Save As may choose a new file, so this writer must not prompt again.
 static void writeEditorFile(App& app, HWND hwnd) {
+    // A half-composed syllable is part of what the user typed: let the IME
+    // finish it so the buffer written below is the final text
+    imeCommitPending(app);
     // The open table cell belongs in the save (#148)
     tableEditCommit(app);
     auto seenKey = frontmatterSeenKey(app);
@@ -2189,6 +2254,8 @@ static void writeEditorFile(App& app, HWND hwnd) {
 }
 
 void saveEditorFile(App& app, HWND hwnd) {
+    // Commit before a Save As dialog can take the focus away
+    imeCommitPending(app);
     tableEditCommit(app);
     if (app.currentFile.empty()) {
         saveEditorFileAs(app, hwnd);
@@ -2208,6 +2275,8 @@ void saveEditorFile(App& app, HWND hwnd) {
 
 // Save As (#121): pick a new path, write there, and the tab follows
 void saveEditorFileAs(App& app, HWND hwnd) {
+    // Commit before the dialog takes the focus away
+    imeCommitPending(app);
     auto key = frontmatterSeenKey(app);
     std::string firstSeen = app.frontmatterFirstSeen.count(key) ? app.frontmatterFirstSeen[key] : "";
     if (!promptSaveAsPath(app, hwnd)) return;  // cancel keeps the old path
@@ -4213,6 +4282,36 @@ static void renderEditorScrollbar(App& app, float editorWidth) {
 // Soft-wrap rendering: each logical line spans editorRowStarts-many visual
 // rows; highlights and the caret come from DirectWrite hit testing on the
 // wrapped per-line layouts
+// Underline the IME composition range that falls on this logical line. The
+// rects come from the same DirectWrite layout that drew the glyphs, so the
+// mark follows wrapping, CJK advance widths and horizontal scroll exactly.
+static void editorDrawImeUnderline(App& app, IDWriteTextLayout* layout,
+                                   float originX, float originY,
+                                   size_t lineStart, size_t lineLen) {
+    if (!layout || !app.ime.active || app.ime.length == 0) return;
+    size_t from = std::max(lineStart, app.ime.start);
+    size_t to = std::min(lineStart + lineLen, app.ime.start + app.ime.length);
+    if (from >= to) return;
+    UINT32 count = 0;
+    layout->HitTestTextRange((UINT32)(from - lineStart), (UINT32)(to - from),
+                             0, 0, nullptr, 0, &count);
+    if (count == 0) return;
+    std::vector<DWRITE_HIT_TEST_METRICS> metrics(count);
+    if (FAILED(layout->HitTestTextRange((UINT32)(from - lineStart),
+            (UINT32)(to - from), 0, 0, metrics.data(), count, &count))) {
+        return;
+    }
+    float thickness = std::max(1.0f, dpi(app, 1.5f));
+    app.brush->SetColor(app.theme.text);
+    for (UINT32 i = 0; i < count; i++) {
+        float bottom = originY + metrics[i].top + metrics[i].height;
+        app.renderTarget->FillRectangle(
+            D2D1::RectF(originX + metrics[i].left, bottom - thickness,
+                        originX + metrics[i].left + metrics[i].width, bottom),
+            app.brush);
+    }
+}
+
 static void renderEditorWrapped(App& app, float editorWidth) {
     ensureEditorRowMetrics(app);
     if (app.editorRowStarts.size() != app.editorLineStarts.size() + 1) return;
@@ -4311,6 +4410,8 @@ static void renderEditorWrapped(App& app, float editorWidth) {
             app.brush->SetColor(app.theme.text);
             app.renderTarget->DrawTextLayout(
                 D2D1::Point2F(textX, lineY), lineLayout, app.brush);
+            editorDrawImeUnderline(app, lineLayout, textX, lineY,
+                                   lineStart, lineLen);
         }
 
         // Caret
@@ -4470,6 +4571,8 @@ void renderEditor(App& app, float editorWidth) {
             app.brush->SetColor(app.theme.text);
             app.renderTarget->DrawTextLayout(
                 D2D1::Point2F(textBase, lineY), lineLayout, app.brush);
+            editorDrawImeUnderline(app, lineLayout, textBase, lineY,
+                                   lineStart, lineLen);
         }
 
     }

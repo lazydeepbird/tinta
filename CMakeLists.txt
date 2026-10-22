@@ -92,6 +92,7 @@ set(SOURCES
     src/plantuml_queue.cpp
     src/plantuml_app.cpp
     src/wordcount.cpp
+    src/ime.cpp
 )
 
 set(HEADERS
@@ -124,6 +125,7 @@ set(HEADERS
     include/plantuml_queue.h
     include/plantuml_app.h
     include/wordcount.h
+    include/ime.h
 )
 
 # Windows resource file (icon)
@@ -310,6 +312,20 @@ if(BUILD_TESTING)
     target_link_libraries(file_path_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
     target_compile_definitions(file_path_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>)
     add_test(NAME copy_file_path COMMAND file_path_tests)
+
+    # Inline IME composition (Korean/CJK) in the source editor. The scripted
+    # IME source makes it deterministic; it never replaces typing with the
+    # real Microsoft IME.
+    add_executable(ime_tests tests/ime_tests.cpp ${INPUT_TEST_SOURCES})
+    target_include_directories(ime_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(ime_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
+    target_compile_definitions(ime_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>
+        TINTA_IME_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/korean-ime.md"
+        TINTA_IME_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}/ime-test-files-$<CONFIG>")
+    add_test(NAME ime_composition COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:ime_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/ime-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_isolated_test.cmake)
 
     add_executable(code_block_layout_tests tests/code_block_layout_tests.cpp ${INPUT_TEST_SOURCES})
     target_include_directories(code_block_layout_tests PRIVATE include ${md4c_SOURCE_DIR}/src)

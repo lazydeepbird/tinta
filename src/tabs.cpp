@@ -14,6 +14,7 @@
 #include "signals.h"
 #include "tableedit.h"
 #include "editor.h"
+#include "ime.h"
 #include "startpage.h"
 #include "file_utils.h"
 #include "i18n.h"
@@ -179,6 +180,10 @@ void tabActivate(App& app, HWND hwnd, int index) {
     if (!source && app.keepDeletedTabs) source = destination.viewerSource;
     if (!source && destination.editMode) source = toUtf8(destination.editorText);
     if (!destination.path.empty() && !source) return;
+
+    // An open IME composition belongs to the tab being left: commit it
+    // before the buffer is parked
+    imeCommitPending(app);
 
     // Leaving an embedded Learn document: an empty tab activated later
     // shows the launcher again

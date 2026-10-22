@@ -1509,11 +1509,35 @@ struct App {
         // Actions sharing a nonzero group undo and redo as one step: an
         // edit at several carets, a line move (#251)
         unsigned group = 0;
+        // Replace actions that overwrote a selection (IME composition) put
+        // it back on Undo
+        bool hadSelection = false;
+        size_t selStart = 0, selEnd = 0;
     };
     std::vector<EditAction> undoStack;
     std::vector<EditAction> redoStack;
     unsigned editorUndoGroup = 0;        // group of the edit in progress
     unsigned editorUndoGroupSerial = 0;
+
+    // IME composition (ime.cpp). While the user composes, the composition
+    // string is spliced into editorText at [start, start+length) so the normal
+    // DirectWrite line layout, wrapping, caret and scrolling all apply to it.
+    // No Undo entry is written until the composition is committed. A
+    // composition always happens at the primary caret: starting one drops
+    // the extra carets (#251).
+    struct ImeComposition {
+        bool active = false;        // a composition transaction is open
+        size_t start = 0;           // first composition char in editorText
+        size_t length = 0;          // composition chars currently in editorText
+        size_t caret = 0;           // IME cursor offset within the composition
+        bool replacedSelection = false;   // the transaction overwrites a selection
+        bool selectionRemoved = false;    // ...and it has left the buffer already
+        std::wstring replaced;      // the overwritten selection's text
+        size_t cursorBefore = 0;    // cursor before the transaction began
+        size_t selStartBefore = 0, selEndBefore = 0;  // raw selection before it
+        bool detaching = false;     // flushing the IME: its messages are ignored
+        bool uiHidden = false;      // default composition UI suppressed via SETCONTEXT
+    } ime;
 
     // Editor text format (monospace)
     IDWriteTextFormat* editorTextFormat = nullptr;

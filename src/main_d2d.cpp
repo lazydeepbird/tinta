@@ -43,6 +43,7 @@
 #include "input.h"
 #include "touch.h"
 #include "editor.h"
+#include "ime.h"
 #include "print.h"
 #include "export.h"
 #include "i18n.h"
@@ -1180,6 +1181,17 @@ static void updateCheckWorker(HWND hwnd) {
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     App* app = g_app;
 
+    // IME composition for the source editor (ime.cpp). Targets that draw
+    // their own composition are consumed there; everything else falls
+    // through to DefWindowProc exactly as before.
+    if (app && (msg == WM_IME_SETCONTEXT || msg == WM_IME_STARTCOMPOSITION ||
+                msg == WM_IME_COMPOSITION || msg == WM_IME_ENDCOMPOSITION)) {
+        LRESULT imeResult = 0;
+        if (imeWindowMessage(*app, hwnd, msg, wParam, lParam, imeResult)) {
+            return imeResult;
+        }
+    }
+
     switch (msg) {
         case WM_NCCALCSIZE: {
             // Reclaim the caption: the title bar becomes the tab strip.
@@ -1250,6 +1262,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
 
         case WM_KILLFOCUS:
+            // Losing the keyboard ends an in-flight composition: commit it
+            // to the buffer it was typed into before anything else happens
+            if (app) imeCommitPending(*app);
             if (app) tabHoverCardDismiss(*app, hwnd);
             if (app) searchInputMouseUp(*app);
             if (app) cancelDocumentScrollbarDrag(*app, hwnd);
@@ -1332,6 +1347,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             break;
 
         case WM_CLOSE:
+            if (app) imeCommitPending(*app);
             if (app) tableEditCommit(*app);
             // "Close without asking" (#252): unsaved buffers stay behind as
             // drafts, offered back on the next launch, and the window closes
@@ -1559,7 +1575,16 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
 
         case WM_KEYDOWN:
             if (app) touchStopFling(*app, hwnd);
-            if (app) return handleKeyDown(*app, hwnd, wParam) ? 1 : 0;
+            // VK_PROCESSKEY: the IME owns this key. Returning 0 lets the
+            // message loop's TranslateMessage feed it to the IME; the app's
+            // own shortcuts and editing keys must not see it.
+            if (wParam == VK_PROCESSKEY) return 0;
+            if (app) {
+                // Escape cancels a live composition; any other real key
+                // commits it first so the key acts on the final text
+                if (imeKeyDown(*app, hwnd, wParam)) return 0;
+                return handleKeyDown(*app, hwnd, wParam) ? 1 : 0;
+            }
             return 0;
 
         case WM_XBUTTONUP:
@@ -1607,12 +1632,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             }
             break;
 
-        case WM_IME_STARTCOMPOSITION:
-        case WM_IME_COMPOSITION:
-            // Anchor the IME composition/candidate window at the caret in
-            // edit mode, then let DefWindowProc run default IME handling
-            if (app) editorPositionImeWindow(*app, hwnd);
-            break;
+        // WM_IME_* composition messages are routed through imeWindowMessage
+        // above: the source editor draws its own composition, while the find
+        // bar and table cell editor keep the default IME UI (DefWindowProc)
 
         case WM_DROPFILES:
             if (app) handleDropFiles(*app, hwnd, wParam);
@@ -1709,6 +1731,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             return 0;
 
         case WM_CONTEXTMENU:
+            if (app) imeCommitPending(*app);
             if (app) tabHoverCardDismiss(*app, hwnd);
             if (app) handleContextMenu(*app, hwnd, lParam);
             return 0;

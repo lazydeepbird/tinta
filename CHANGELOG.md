@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- Korean and other IME input in the source editor shows the composing text inline at the caret (with an underline) instead of in a separate window, commits it as a single undoable edit, and commits it before saving, switching tabs, clicking, losing focus or closing. Escape cancels an uncommitted composition and restores a replaced selection. A composition starts at the primary caret and drops any extra carets.
+
 ## [v3.9.5] - 2026-10-29
 
 ### Added
