@@ -169,6 +169,7 @@ set(SOURCES
     src/source_style.cpp
     src/ui_paint.cpp
     src/zotero.cpp
+    src/ime.cpp
 )
 
 set(HEADERS
@@ -209,6 +210,7 @@ set(HEADERS
     include/sheet.h
     include/sheet_ui.h
     include/zotero.h
+    include/ime.h
 )
 
 # Citation styles and locales Tinta ships (resources/csl, docs/specs/scholar.md):
@@ -602,6 +604,20 @@ if(BUILD_TESTING)
     target_compile_definitions(nesting_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>
         TINTA_DEEP_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/deep-nesting.md")
     add_test(NAME deep_nesting COMMAND nesting_tests)
+
+    # Inline IME composition (Korean/CJK) in the source editor. The scripted
+    # IME source makes it deterministic; it never replaces typing with the
+    # real Microsoft IME.
+    add_executable(ime_tests tests/ime_tests.cpp ${INPUT_TEST_SOURCES})
+    target_include_directories(ime_tests PRIVATE include ${md4c_SOURCE_DIR}/src)
+    target_link_libraries(ime_tests PRIVATE $<TARGET_PROPERTY:tinta,LINK_LIBRARIES>)
+    target_compile_definitions(ime_tests PRIVATE $<TARGET_PROPERTY:tinta,COMPILE_DEFINITIONS>
+        TINTA_IME_FIXTURE="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/korean-ime.md"
+        TINTA_IME_TEST_DIR="${CMAKE_CURRENT_BINARY_DIR}/ime-test-files-$<CONFIG>")
+    add_test(NAME ime_composition COMMAND ${CMAKE_COMMAND}
+        -DTEST_BINARY=$<TARGET_FILE:ime_tests>
+        -DTEST_DIR=${CMAKE_CURRENT_BINARY_DIR}/ime-test-$<CONFIG>
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/run_isolated_test.cmake)
 
     add_executable(code_block_layout_tests tests/code_block_layout_tests.cpp ${INPUT_TEST_SOURCES})
     target_include_directories(code_block_layout_tests PRIVATE include ${md4c_SOURCE_DIR}/src)

@@ -14,6 +14,7 @@
 #include "document.h"
 #include "editor.h"
 #include "scholar.h"
+#include "ime.h"
 #include "file_utils.h"
 #include "utils.h"
 #include "search.h"
@@ -2279,6 +2280,9 @@ static void toggleApplicationMenu(App& app, HWND hwnd, bool keyboard = false) {
 }
 
 void handleMouseDown(App& app, HWND hwnd, WPARAM, LPARAM lParam) {
+    // Clicking moves the caret or changes the input target: an open IME
+    // composition is committed where it was typed first
+    imeCommitPending(app);
     // A fresh press is a new gesture, even if a cancelled drag released elsewhere.
     app.swallowNextMouseUp = false;
     // A click elsewhere puts the go-to-line prompt away (#276); one on the
@@ -5375,6 +5379,7 @@ void handleFileWatchTimer(App& app, HWND hwnd) {
                     tabActivate(app, hwnd, (int)i);
                     app.lastFileWriteTime = current;
                 }
+                imeCommitPending(app);  // the dialog takes over the keyboard
                 app.confirmExitPending = true;
                 app.confirmExitExternal = true;
                 app.confirmExitOpenedAt = std::chrono::steady_clock::now();
