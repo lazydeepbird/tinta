@@ -982,18 +982,6 @@ D2D1_COLOR_F stripBackground(const App& app) {
     return tabStripBackground(app);
 }
 
-// Rounded-top tab body: rounded rect extended past the strip bottom, the
-// caller clips to the strip so the bottom corners stay square
-void fillTabBody(App& app, const D2D1_RECT_F& r, float radius,
-                 const D2D1_COLOR_F& color) {
-    app.brush->SetColor(color);
-    app.renderTarget->FillRoundedRectangle(
-        D2D1::RoundedRect(
-            D2D1::RectF(r.left, r.top, r.right, r.bottom + radius * 2.0f),
-            radius, radius),
-        app.brush);
-}
-
 void drawCloseGlyph(App& app, float cx, float cy, float arm,
                     const D2D1_COLOR_F& color) {
     app.brush->SetColor(color);
@@ -1179,23 +1167,45 @@ void renderTabStrip(App& app) {
     } else {
         StripMetrics m = stripMetrics(app);
         app.tabFirstVisible = m.firstVisible;
-        float radius = dpi(app, 8.0f);
         float gap = dpi(app, 2.0f);
 
-        // The active tab's halo reaches past its sides. Clipped at the row's
-        // ends it was cut away on the outer side of the first and last tab,
-        // with the body's anti-aliased edge (#271); the clip leaves room for
-        // it. Labels stay inside their tabs (trimmed), and the reach stops
-        // short of the app icon and the + glyph.
-        const float haloReach = dpi(app, 3.0f * 2.2f) + 1.0f;
+        // Flat, square-cornered tabs that all stand the same height, set
+        // apart by thin dividers. The active tab stands out by its fill and
+        // a hairline outline on its sides and top instead of a shadow.
+        const float tabTop = dpi(app, 5.0f);
+        const float hairline = std::max(1.0f, dpi(app, 1.0f));
+        D2D1_COLOR_F outline = text;
+        outline.a = app.theme.isDark ? 0.24f : 0.28f;
+        D2D1_COLOR_F divider = text;
+        divider.a = app.theme.isDark ? 0.18f : 0.14f;
+
+        // The outline sits on the tabs' own edges: the clip keeps a pixel
+        // past the row's ends so the first and last tab are not cut (#271).
+        // Labels stay inside their tabs (trimmed).
         app.renderTarget->PushAxisAlignedClip(
-            D2D1::RectF(m.tabsLeft - haloReach, 0, m.tabsRight + haloReach, stripH),
+            D2D1::RectF(m.tabsLeft - 1.0f, 0, m.tabsRight + 1.0f, stripH),
             D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
 
         // The pinned tabs, all of them, then the others in view (#312)
         std::vector<int> shown;
         for (int i = 0; i < m.pinnedCount; i++) shown.push_back(i);
         for (int i = m.firstVisible; i < m.firstVisible + m.visibleCount; i++) shown.push_back(i);
+
+        // Dividers between neighbours, except beside the active or hovered
+        // tab (its own fill marks it) and around a tab being dragged
+        auto plain = [&](int t) {
+            return t != app.activeTab && t != app.hoveredTab &&
+                   !((app.tabDragging || app.tabDragDetached) && t == app.tabDragIndex);
+        };
+        for (size_t k = 0; k + 1 < shown.size(); k++) {
+            if (!plain(shown[k]) || !plain(shown[k + 1])) continue;
+            float dx = tabLeftAt(m, shown[k + 1]) - gap * 0.5f;
+            app.brush->SetColor(divider);
+            app.renderTarget->DrawLine(D2D1::Point2F(dx, tabTop + dpi(app, 8.0f)),
+                                       D2D1::Point2F(dx, stripH - dpi(app, 8.0f)),
+                                       app.brush, hairline);
+        }
+
         for (int i : shown) {
             // Pulled clear of the strip: the slot stays as a gap while
             // the tab rides along as the ghost card
@@ -1213,25 +1223,30 @@ void renderTabStrip(App& app) {
                 float hi = pinned ? m.unpinnedLeft - gap : m.tabsRight;
                 x = std::max(lo, std::min(follow, hi - width));
             }
-            float top = active ? dpi(app, 4.0f) : dpi(app, 8.0f);
+            float top = tabTop;
             D2D1_RECT_F r = D2D1::RectF(x, top, x + width, stripH);
             const D2D1_COLOR_F ink = active ? app.theme.text : text;
             D2D1_COLOR_F inkMuted = ink;
             inkMuted.a = muted.a;
 
             if (active) {
-                // The chosen tab is the page's colour with an edge of its
-                // own, which meets the line under the row at its feet (it
-                // had a shadow, a smudge at this size)
-                fillTabBody(app, r, radius, app.theme.background);
-                app.brush->SetColor(edge);
-                app.renderTarget->DrawRoundedRectangle(
-                    D2D1::RoundedRect(
-                        D2D1::RectF(r.left + 0.5f, r.top + 0.5f, r.right - 0.5f, r.bottom + radius * 2.0f),
-                        radius, radius),
-                    app.brush, 1.0f);
+                app.brush->SetColor(app.theme.background);
+                app.renderTarget->FillRectangle(r, app.brush);
+                // Open at the bottom, where the tab runs into the page
+                const float h = hairline * 0.5f;
+                app.brush->SetColor(outline);
+                app.renderTarget->DrawLine(D2D1::Point2F(r.left + h, stripH),
+                                           D2D1::Point2F(r.left + h, r.top + h),
+                                           app.brush, hairline);
+                app.renderTarget->DrawLine(D2D1::Point2F(r.left, r.top + h),
+                                           D2D1::Point2F(r.right, r.top + h),
+                                           app.brush, hairline);
+                app.renderTarget->DrawLine(D2D1::Point2F(r.right - h, r.top + h),
+                                           D2D1::Point2F(r.right - h, stripH),
+                                           app.brush, hairline);
             } else if (hovered) {
-                fillTabBody(app, r, radius, faint);
+                app.brush->SetColor(faint);
+                app.renderTarget->FillRectangle(r, app.brush);
             }
 
             bool dirty = active ? app.unsavedNow()
