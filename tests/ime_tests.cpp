@@ -10,6 +10,7 @@
 #include "editor.h"
 #include "ime.h"
 #include "input.h"
+#include "keystroke.h"
 #include "render.h"
 #include "search.h"
 #include "settings.h"
@@ -243,7 +244,7 @@ void typeSentence(App& app, const std::wstring& sentence) {
                 imeEndComposition(app, ime);
                 composing = false;
             }
-            handleCharInput(app, app.hwnd, ch);
+            typeKeys(app, std::wstring(1, ch));
         }
     }
     if (composing) {
@@ -547,7 +548,7 @@ void otherInputTargets(App& app) {
           "the source document is untouched");
     // ...and the WM_CHAR that path produces lands in the find field, not the source
     app.searchQuery.clear();
-    handleCharInput(app, app.hwnd, L'\uD55C');
+    typeKeys(app, std::wstring(1, L'\uD55C'));
     check(app.editorText == L"source text", "WM_CHAR for the find field never edits the source");
     app.showSearch = app.searchActive = false;
 
