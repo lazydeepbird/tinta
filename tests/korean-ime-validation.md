@@ -52,6 +52,29 @@ on/off.
   Undo/Escape, commit on save/click/focus/tab switch, wrapped lines and extra
   carets working.
 
+## Live (upstream v4.0.1)
+
+- Rebased on upstream v4.0.1 and extended `imeOwnsInput()` to Live, which
+  edits `editorText` directly. `ime_composition` gained the case "Live:
+  composition on the page, one commit per syllable, menus keep the default
+  IME": a mixed document (heading, bold, link, nested list, quote with code,
+  table) with the caret after a list item. It checks the splice, that Live's
+  text and caret follow it, the candidate anchor (right of the rail, on the
+  composition's line), one commit per syllable, Undo, and that Live's menu
+  and the go-to-line prompt leave the IME to the default path.
+- Frames `ime-live-composing.png` (the syllable underlined in the list item,
+  the block's markdown shown as typed) and `ime-live-committed.png` (the
+  word, no underline) were inspected in the dark theme at 1050 px.
+- MinGW Debug harness: 51/59 pass. The 8 failures fail on pure upstream
+  v4.0.1 (or are known on this PC): `ui_font_language`,
+  `wrapped_cursor_navigation`, `wide_table_layout`, `highlight_layout`,
+  `plantuml_parser`, `image_cache_and_decode` (network share paths, the same
+  7 failures on a master build), and `editor_context_selection` /
+  `code_block_layout`, which pass when run serially.
+- Not checked: the Microsoft IME typed by hand in Live in the built app,
+  narrow widths and the light theme in Live, and sheet cards (they keep the
+  floating composition window).
+
 ## Limitations
 
 - Not yet built or tested with MSVC.

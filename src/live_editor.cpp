@@ -696,6 +696,40 @@ void finish(App& app, HWND hwnd, LiveEditor& L) {
     InvalidateRect(hwnd, nullptr, FALSE);
 }
 
+// An IME composition (ime.cpp) sits in the text uncommitted, underlined as
+// Source underlines it. The rects come from the layout that drew the glyphs,
+// in its own units (the transform is at the layout's origin)
+void drawImeUnderline(App& app, const LiveEditor& L, const live::Look& look) {
+    if (!L.layout || !app.ime.active || app.ime.length == 0) return;
+    size_t from = std::max(app.ime.start, L.from), to = std::min(app.ime.start + app.ime.length, L.to);
+    if (from >= to) return;
+    // A long block is laid out in parts (4.0.3): each part holds a stretch
+    // of the text, offset from L.from, and stands at its own top
+    const float thickness = std::max(1.0f, dpi(app, 1.5f));
+    app.brush->SetColor(look.text);
+    std::vector<DWRITE_HIT_TEST_METRICS> metrics;
+    for (const live::Laid::Part& part : L.layout->parts) {
+        if (!part.layout) continue;
+        const size_t partFrom = L.from + part.at, partTo = partFrom + part.length;
+        const size_t a = std::max(from, partFrom), b = std::min(to, partTo);
+        if (a >= b) continue;
+        UINT32 count = 0;
+        part.layout->HitTestTextRange((UINT32)(a - partFrom), (UINT32)(b - a), 0, part.top, nullptr, 0, &count);
+        if (count == 0) continue;
+        metrics.resize(count);
+        if (FAILED(part.layout->HitTestTextRange((UINT32)(a - partFrom), (UINT32)(b - a), 0, part.top,
+                                                 metrics.data(), count, &count))) {
+            continue;
+        }
+        for (UINT32 i = 0; i < count; i++) {
+            float bottom = metrics[i].top + metrics[i].height;
+            app.renderTarget->FillRectangle(
+                D2D1::RectF(metrics[i].left, bottom - thickness, metrics[i].left + metrics[i].width, bottom),
+                app.brush);
+        }
+    }
+}
+
 // A new tab's empty page keeps its Open and New sheet buttons
 bool onQuickNoteButton(const App& app, int x, int y) {
     if (!quickNoteEmptyStateActive(app)) return false;
@@ -806,6 +840,7 @@ void renderLivePage(App& app) {
     const float viewTop = (0.0f - saved._32) / scale - drawnAt;
     const float viewBottom = (app.renderTarget->GetSize().height - saved._32) / scale - drawnAt;
     live::draw(app, L.e, L.layout, L.from, look, app.cursorBlinkOn, 1.0f, viewTop, viewBottom);
+    drawImeUnderline(app, L, look);
     app.renderTarget->SetTransform(saved);
     // Under a diagram's, a formula's or a picture's Markdown, what the page
     // drew for it, caught up after each pause in the typing
@@ -1291,6 +1326,17 @@ bool liveCaretClientPoint(App& app, D2D1_POINT_2F& top, float& height) {
     LiveEditor& L = state(app);
     float x = 0, y = 0, h = 0;
     if (!L.placed || !editorLiveOn(app) || !live::caretPoint(L.layout, L.from, L.e.caret, x, y, h)) return false;
+    top = D2D1::Point2F(documentViewportX(app) + L.textX + x - app.scrollX, L.textY + y - app.scrollY);
+    height = h;
+    return true;
+}
+
+bool liveTextClientPoint(App& app, size_t at, D2D1_POINT_2F& top, float& height) {
+    if (!editorLiveOn(app)) return false;
+    // Laid out from today's text: the IME asks between a splice and the next frame
+    LiveEditor& L = begin(app);
+    float x = 0, y = 0, h = 0;
+    if (!L.placed || at < L.from || at > L.to || !live::caretPoint(L.layout, L.from, at, x, y, h)) return false;
     top = D2D1::Point2F(documentViewportX(app) + L.textX + x - app.scrollX, L.textY + y - app.scrollY);
     height = h;
     return true;

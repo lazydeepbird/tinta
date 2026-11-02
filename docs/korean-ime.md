@@ -1,7 +1,7 @@
 # Inline IME composition
 
-The Markdown **source editor** draws the IME composition itself (Korean,
-Japanese, Chinese). Previously the editor only moved the system composition
+The Markdown **source editor** and **Live** draw the IME composition
+themselves (Korean, Japanese, Chinese). Previously the editor only moved the system composition
 window near the caret and left the rest to `DefWindowProc`, so the syllable
 being composed lived in a separate floating window below the line.
 
@@ -15,6 +15,14 @@ While the user composes, the composition string is **spliced into
 DirectWrite line layout, soft wrapping, caret, scrolling and horizontal scroll
 therefore apply to it unchanged, and the text after the caret reflows instead
 of being overdrawn. The range is underlined in both render paths.
+
+Live (`src/live_editor.cpp`) edits the same buffer: each frame and each Live
+input handler syncs its text and caret from `editorText` and
+`editorCursorPos`, so the splice shows up in the block being typed in and
+reflows it. `renderLivePage` underlines the range from the live layout, and
+`liveTextClientPoint()` gives the candidate list its anchor under the
+composition's start. The commit goes through the source's undo, which is
+Live's undo too.
 
 Invariants (details in `ime.h`):
 
@@ -37,9 +45,9 @@ Invariants (details in `ime.h`):
 
 ## Who owns the composition
 
-`imeOwnsInput()` is true only when the source editor is the input target. The
-find/replace fields, the table cell editor, dialogs and the reading preview
-return "not handled" and keep the default Windows IME UI and the
+`imeOwnsInput()` is true only when the source editor or Live is the input
+target. The find/replace fields, the table cell editor, the go-to-line
+prompt, Live's own menu, sheet cards, dialogs and the reading preview return "not handled" and keep the default Windows IME UI and the
 `WM_IME_CHAR` -> `WM_CHAR` path they always used. `WM_IME_SETCONTEXT` clears
 `ISC_SHOWUICOMPOSITIONWINDOW` (and only that flag; the candidate list stays)
 while the editor owns input, and is re-sent when the target kind changes.
@@ -59,10 +67,14 @@ never reach shortcut code.
 
 - `ime_composition` (`tests/ime_tests.cpp`): a scripted IME source drives the
   production state machine and the real editor layout (wrap, zoom, DPI, theme,
-  preview on/off, extra carets). It runs from an isolated copy with its own
+  preview on/off, extra carets) and Live (splice, underline frame, candidate
+  anchor, menus). Frames go to `ime-test-files-<config>/`. It runs from an isolated copy with its own
   `settings.ini` (`tests/run_isolated_test.cmake`).
 - `tests/fixtures/korean-ime.md` is the mixed Korean/English/table/code/
   Mermaid document for manual checks.
 
 These prove the logic, ordering and failure handling. They do not replace
 typing with the Microsoft Korean IME in the built app.
+
+Not covered: a sheet's cards (`.smd`) keep the default floating composition
+window and receive the committed text as `WM_CHAR`, as before.

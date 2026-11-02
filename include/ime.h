@@ -58,7 +58,7 @@ private:
     HWND hwnd_;
 };
 
-// True when the source editor is the input target and draws its own
+// True when the source editor or Live is the input target and draws its own
 // composition. Find/replace fields, the table cell editor, dialogs and the
 // reading preview are not.
 bool imeOwnsInput(const App& app);

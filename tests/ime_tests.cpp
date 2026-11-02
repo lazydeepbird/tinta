@@ -8,9 +8,12 @@
 
 #include "d2d_init.h"
 #include "editor.h"
+#include "frame_preview.h"
 #include "ime.h"
 #include "input.h"
 #include "keystroke.h"
+#include "live_editor.h"
+#include "live_text.h"
 #include "render.h"
 #include "search.h"
 #include "settings.h"
@@ -768,6 +771,89 @@ std::wstring readFile(const std::string& path) {
     MultiByteToWideChar(CP_UTF8, 0, bytes.data(), (int)bytes.size(), &wide[0], n);
     return wide;
 }
+// Live (live_editor.h) types into editorText as Source does, so the same
+// splice puts the composition on the page: it reflows the caret's block,
+// is underlined there, and commits as typing does. Live's menu and the
+// go-to-line prompt take the keys, so the IME is left to them.
+void liveComposition(App& app, const std::string& dir) {
+    beginCase("Live: composition on the page, one commit per syllable, menus keep the default IME");
+    const std::wstring doc =
+        L"# Title\n\nSome **bold** text and a [link](https://example.com).\n\n"
+        L"- item one\n- item two\n  - nested\n\n> a quote with `code`\n\n"
+        L"| A | B |\n|---|---|\n| 1 | 2 |\n";
+    const std::wstring han = L"\xD55C", geul = L"\xAE00";
+    reset(app, doc, 0);
+    editorReparse(app, true);
+    ensureLayoutComplete(app);
+    setEditorLive(app, app.hwnd, true);
+    const size_t at = doc.find(L"item one") + 8;
+    app.editorCursorPos = app.editorSelStart = app.editorSelEnd = at;
+    check(editorLiveOn(app), "Live is on");
+    check(imeOwnsInput(app), "Live owns IME input");
+
+    FakeIme ime;
+    check(imeStartComposition(app, ime), "START is consumed in Live");
+    send(app, ime, COMP, L"\x314E");
+    check(send(app, ime, COMP, han.c_str()), "COMPSTR is consumed in Live");
+    check(app.editorText == doc.substr(0, at) + han + doc.substr(at),
+          "the composing syllable is spliced into the text at the caret");
+    check(app.undoStack.empty() && !app.editorDirty, "an interim string is no edit");
+    D2D1_POINT_2F start{}, caret{};
+    float startHeight = 0, caretHeight = 0;
+    check(liveTextClientPoint(app, app.ime.start, start, startHeight) && startHeight > 0,
+          "the composition's start is on the page");
+    check(liveText(app).text == app.editorText, "Live's text follows the splice");
+    check(liveText(app).caret == at + 1, "Live's caret sits after the composing syllable");
+    check(liveCaretClientPoint(app, caret, caretHeight) && caret.x > start.x &&
+              std::fabs(caret.y - start.y) < 1.0f,
+          "the caret moved right on the composition's line");
+    check(start.x > documentViewportX(app), "the anchor is in window pixels, right of the rail");
+    std::filesystem::create_directories(dir);
+    auto shot = [&](const char* name) {
+        return saveFramePreview(app, std::filesystem::path(dir) / name, [&] {
+            app.renderTarget->Clear(app.theme.background);
+            D2D1_MATRIX_3X2_F saved;
+            app.renderTarget->GetTransform(&saved);
+            app.renderTarget->SetTransform(D2D1::Matrix3x2F::Translation(documentViewportX(app), 0) * saved);
+            renderLivePage(app);
+            app.renderTarget->SetTransform(saved);
+        });
+    };
+    check(shot("ime-live-composing.png"), "a frame draws the composition in Live");
+
+    send(app, ime, RESULT | COMP, L"\x3131", han.c_str());
+    check(app.editorText == doc.substr(0, at) + han + L"\x3131" + doc.substr(at),
+          "the result stays and the next syllable composes behind it");
+    send(app, ime, COMP, geul.c_str());
+    send(app, ime, RESULT, L"", geul.c_str());
+    check(imeEndComposition(app, ime), "END is consumed in Live");
+    const std::wstring typed = doc.substr(0, at) + han + geul + doc.substr(at);
+    check(app.editorText == typed, "both syllables are in the text exactly once");
+    check(!app.ime.active && app.editorCursorPos == at + 2, "the caret is after the word");
+    check(app.editorDirty && !app.undoStack.empty() && app.undoStack.size() <= 2,
+          "the commits are typing, not one edit per interim string");
+    D2D1_POINT_2F unused{};
+    float unusedHeight = 0;
+    liveTextClientPoint(app, at, unused, unusedHeight);
+    check(liveText(app).text == typed && liveText(app).caret == at + 2, "Live shows the committed word");
+    check(shot("ime-live-committed.png"), "a frame draws the committed word in Live");
+    while (!app.undoStack.empty()) editorUndoForTest(app);
+    check(app.editorText == doc, "undo takes the word away again");
+
+    // The keys belong to Live's menu or the go-to-line prompt while they are open
+    liveContextMenu(app, app.hwnd, 0, 0, true);
+    if (liveMenuOpen(app)) {
+        check(!imeOwnsInput(app), "Live's menu keeps the default IME");
+        liveCloseMenu(app);
+    }
+    app.gotoLineOpen = true;
+    check(!imeOwnsInput(app), "the go-to-line prompt keeps the default IME");
+    app.gotoLineOpen = false;
+    check(imeOwnsInput(app), "Live owns the IME again");
+    setEditorLive(app, app.hwnd, false);
+    check(!editorLiveOn(app) && imeOwnsInput(app), "back in Source, the source editor owns it");
+}
+
 void writeFile(const std::string& path, const std::string& bytes) {
     std::ofstream out(std::wstring(path.begin(), path.end()), std::ios::binary);
     out << bytes;
@@ -851,6 +937,7 @@ int main() {
     windowMessageRouting(app);
     surrogateSafety(app);
     extraCarets(app);
+    liveComposition(app, dir);
     // the layout case needs the fixture document back
     app.editorText = fixtureText;
     rebuildLineStarts(app);

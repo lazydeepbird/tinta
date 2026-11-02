@@ -56,6 +56,10 @@ std::vector<LiveText::Choice> citeChoices(App& app, const std::wstring& text, si
 void liveTypeCitation(App& app, HWND hwnd);
 // The caret on the screen, for the IME's windows
 bool liveCaretClientPoint(App& app, D2D1_POINT_2F& top, float& height);
+// Where text position `at` is on the page as shown (its line's top, client
+// pixels) and its line's height; false outside the stretch being typed in.
+// The IME anchors its candidate list under a composition's start with it
+bool liveTextClientPoint(App& app, size_t at, D2D1_POINT_2F& top, float& height);
 // Where the live stretch is on the page as shown: its top and bottom, and
 // how far the page below it moved
 bool livePageGeometry(const App& app, float& top, float& bottom, float& shift);

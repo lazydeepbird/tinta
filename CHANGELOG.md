@@ -6,6 +6,7 @@
 - Tabs are flat and square-cornered, all the same height, with a thin divider between inactive tabs. The active tab is marked by the page colour and a hairline outline on its sides and top instead of a raised, rounded body with a shadow.
 
 ### Fixed
+- Korean and other IME input in Live composes on the page the same way: the syllable being typed sits underlined in its block, and the candidate list opens under it. Sheet cards keep the floating composition window.
 - Korean and other IME input in the source editor shows the composing text inline at the caret (with an underline) instead of in a separate window, commits it as a single undoable edit, and commits it before saving, switching tabs, clicking, losing focus or closing. Escape cancels an uncommitted composition and restores a replaced selection. A composition starts at the primary caret and drops any extra carets.
 
 ## [v4.1.1] - 2026-11-14

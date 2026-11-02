@@ -1,6 +1,8 @@
 #include "ime.h"
 #include "editor.h"
+#include "live_editor.h"
 #include "search.h"
+#include "sheet_ui.h"
 
 #include <imm.h>
 #include <algorithm>
@@ -203,8 +205,17 @@ bool Win32ImeSource::notify(DWORD action) {
 
 // --- Ownership ---
 
+// Live (live_editor.h) types into the source's own buffer, editorText, and
+// lays its caret's block out from it each frame, so the same splice shows
+// the composition on the page. Its menu takes every key while it is open.
+static bool liveEditorTakesTyping(const App& app) {
+    return editorLiveOn(app) && !app.tableEditActive &&
+           !(app.showSearch && app.searchActive) && !liveMenuOpen(app);
+}
+
 bool imeOwnsInput(const App& app) {
-    return sourceEditorHasFocus(app) && !app.confirmExitPending &&
+    return (sourceEditorHasFocus(app) || liveEditorTakesTyping(app)) &&
+           !sheetActive(app) && !app.gotoLineOpen && !app.confirmExitPending &&
            !app.showContextMenu && !app.showSettings && !app.showThemeChooser &&
            !app.showHelp && !app.showShortcutEditor && !app.showThemeEditor &&
            !app.showPrintPreview && !app.annotEditorOpen;
@@ -334,12 +345,18 @@ bool imeKeyDown(App& app, HWND hwnd, WPARAM virtualKey) {
 void imePositionWindows(App& app, HWND hwnd) {
     if (!app.ime.active || !hwnd) return;
     D2D1_POINT_2F point{};
-    if (!editorPointForPos(app, app.ime.start, point)) return;
+    float lineHeight = 0;
+    if (editorLiveOn(app)) {
+        if (!liveTextClientPoint(app, app.ime.start, point, lineHeight)) return;
+    } else {
+        if (!editorPointForPos(app, app.ime.start, point)) return;
+        lineHeight = editorLineHeightPx(app);
+    }
     HIMC himc = ImmGetContext(hwnd);
     if (!himc) return;
     // Just below the line the composition starts on, so the candidate list
     // never covers the text being composed
-    POINT below = {(LONG)point.x, (LONG)(point.y + editorLineHeightPx(app))};
+    POINT below = {(LONG)point.x, (LONG)(point.y + lineHeight)};
     COMPOSITIONFORM composition{};
     composition.dwStyle = CFS_POINT;
     composition.ptCurrentPos = below;
