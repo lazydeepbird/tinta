@@ -56,7 +56,10 @@ while the editor owns input, and is re-sent when the target kind changes.
 
 `imeCommitPending()` runs before anything reads or replaces the buffer: save,
 tab switch, mouse press, context menu, focus loss (which covers minimizing),
-close, leaving edit mode, an external-change prompt, and any non-modifier key.
+close, leaving edit mode, an external-change prompt, a reload from disk, and
+any non-modifier key. The file watch does not reload a clean buffer under an
+open composition (the spliced syllable does not mark it dirty); it waits, and
+once the syllable commits the change asks, Reload or Keep mine.
 It asks the IME to finish (`CPS_COMPLETE`); if the IME does not answer, what
 is displayed is kept and the IME's own copy is cancelled (its flush messages
 are ignored) so it cannot re-send and duplicate the text. Escape cancels a

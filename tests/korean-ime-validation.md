@@ -75,6 +75,24 @@ on/off.
   narrow widths and the light theme in Live, and sheet cards (they keep the
   floating composition window).
 
+## File watch (upstream v4.0.2)
+
+- Upstream v4.0.2 reloads a clean Source or Live buffer when another program
+  changes the file (#311). A composing syllable is spliced into `editorText`
+  without marking it dirty, so a watch tick during a composition diffed the
+  syllable away and left the IME range pointing past the new text. The watch
+  now waits while a composition is open, and `editorReloadFromDisk()` commits
+  any composition first.
+- `ime_composition` gained the case "an external file change waits for the
+  composition to commit": compose on a clean buffer, change the file on disk,
+  run the watch; the syllable and its range stay and nothing reloads. After
+  the commit the buffer is unsaved and the next tick asks, Reload or Keep
+  mine. With the fix removed, three of its checks fail.
+- Rebased the flat tab style onto pinned tabs (#312): the dividers run
+  between the pinned tabs and the tabs in view, placed by `tabLeftAt()`.
+- MinGW Debug harness: 54/62 pass; the 8 failures are the known ones
+  (`editor_context_selection` and `code_block_layout` pass serially).
+
 ## Limitations
 
 - Not yet built or tested with MSVC.

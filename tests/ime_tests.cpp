@@ -8,6 +8,7 @@
 
 #include "d2d_init.h"
 #include "editor.h"
+#include "file_utils.h"
 #include "frame_preview.h"
 #include "ime.h"
 #include "input.h"
@@ -912,6 +913,61 @@ void saveAndTabSwitch(const std::string& dir) {
     }
 }
 
+// Another program changes the file while a syllable is composing (#311): the
+// watch must not reload the buffer under the open transaction
+void externalChangeWhileComposing(const std::string& dir) {
+    beginCase("an external file change waits for the composition to commit");
+    CreateDirectoryW(std::wstring(dir.begin(), dir.end()).c_str(), nullptr);
+    const std::string path = dir + "\\ime-watched.md";
+    writeFile(path, "# Watched\n\nbody\n");
+    auto state = makeApp(path);
+    if (!state) { check(false, "app initializes"); return; }
+    App& app = *state;
+    app.editorLive = false;
+    tabsInit(app);  // the unsaved-change prompt walks the tabs
+    updateFileWriteTime(app);
+    app.editorCursorPos = app.editorText.size();
+    FakeIme ime;
+    imeStartComposition(app, ime);
+    send(app, ime, COMP, L"\uD55C");
+    check(app.ime.active && !app.editorDirty, "composing on a clean buffer");
+
+    writeFile(path, "# Watched\n\nbody\n\nOUTSIDE\n");
+    {
+        // move the write time on so the watch sees the change
+        HANDLE h = CreateFileW(std::wstring(path.begin(), path.end()).c_str(), FILE_WRITE_ATTRIBUTES,
+                               FILE_SHARE_READ | FILE_SHARE_WRITE, nullptr, OPEN_EXISTING, 0, nullptr);
+        FILETIME now{};
+        GetSystemTimeAsFileTime(&now);
+        ULARGE_INTEGER t{};
+        t.LowPart = now.dwLowDateTime;
+        t.HighPart = now.dwHighDateTime;
+        t.QuadPart += 50000000ULL;
+        FILETIME stamp{t.LowPart, t.HighPart};
+        if (h != INVALID_HANDLE_VALUE) {
+            SetFileTime(h, nullptr, nullptr, &stamp);
+            CloseHandle(h);
+        }
+    }
+    handleFileWatchTimer(app, app.hwnd);
+    check(app.ime.active, "the composition stays open through the watch tick");
+    check(occurrences(app.editorText, L"\uD55C") == 1 &&
+              app.editorText.find(L"OUTSIDE") == std::wstring::npos,
+          "the buffer keeps the composing syllable and is not reloaded under it");
+    check(app.editorText.substr(app.ime.start, app.ime.length) == L"\uD55C",
+          "the composition range still covers its syllable");
+
+    send(app, ime, RESULT, L"", L"\uD55C");
+    imeEndComposition(app, ime);
+    check(!app.ime.active && app.editorDirty && occurrences(app.editorText, L"\uD55C") == 1,
+          "the committed syllable makes the buffer unsaved");
+    handleFileWatchTimer(app, app.hwnd);
+    check(app.confirmExitPending && app.confirmExitExternal &&
+              occurrences(app.editorText, L"\uD55C") == 1,
+          "the change then asks, Reload or Keep mine, keeping the syllable");
+    app.confirmExitPending = app.confirmExitExternal = false;
+}
+
 }  // namespace
 
 int main() {
@@ -944,6 +1000,7 @@ int main() {
     layoutAndDisplay(app);
     state.reset();
     saveAndTabSwitch(dir);
+    externalChangeWhileComposing(dir);
 
     for (const auto& c : caseAssertions)
         std::cout << "  case: " << c.first << " (" << c.second << " assertions)\n";

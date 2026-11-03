@@ -2596,6 +2596,7 @@ void saveFileAs(App& app, HWND hwnd) {
 
 bool editorReloadFromDisk(App& app, HWND hwnd) {
     if (app.currentFile.empty()) return false;
+    imeCommitPending(app);  // never diff a spliced composition away
     std::ifstream in(toWide(app.currentFile), std::ios::binary);
     if (!in) return false;
     const std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());

@@ -5391,6 +5391,11 @@ void handleFileWatchTimer(App& app, HWND hwnd) {
 
     if (app.currentFile.empty() || !app.fileWatchEnabled) return;
     if (app.editMode && (app.editorDirty || app.confirmExitPending)) return;
+    // A composing IME syllable sits in editorText without marking it dirty:
+    // a reload now would diff it away under the open transaction. Wait; once
+    // it commits the buffer is unsaved and the change asks, Reload or Keep
+    // mine, as for any other edit
+    if (app.editMode && app.ime.active) return;
 
     std::wstring widePath = toWide(app.currentFile);
     HANDLE h = CreateFileW(widePath.c_str(), GENERIC_READ,
