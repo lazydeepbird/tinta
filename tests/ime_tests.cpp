@@ -43,6 +43,7 @@ void check(bool ok, const char* what) {
         std::cerr << "FAIL [" << currentCase << "]: " << what << '\n';
     }
 }
+void check(bool ok, const std::string& what) { check(ok, what.c_str()); }
 void beginCase(const char* name) {
     currentCase = name;
     caseAssertions.push_back({name, 0});
@@ -913,6 +914,62 @@ void saveAndTabSwitch(const std::string& dir) {
     }
 }
 
+// A Markdown file that opens straight in the editor (#322) takes a syllable
+// inline from its first key: the tab being left gets its syllable first, and
+// the new tab composes in the view it opened in
+void openModeComposition(const std::string& dir) {
+    beginCase("a file opened straight into Live or Source composes inline");
+    CreateDirectoryW(std::wstring(dir.begin(), dir.end()).c_str(), nullptr);
+    const std::string first = dir + "\\ime-open-first.md";
+    writeFile(first, "# First\n\nbody\n");
+    auto state = makeApp(first);
+    if (!state) { check(false, "app initializes"); return; }
+    App& app = *state;
+    struct Mode { int mode; bool live; const char* name; };
+    for (const Mode m : {Mode{OPEN_LIVE, true, "live"}, Mode{OPEN_SOURCE, false, "source"}}) {
+        const std::string where = std::string("openMode=") + m.name + ": ";
+        const std::string next = dir + "\\ime-open-" + m.name + ".md";
+        writeFile(next, "# Next\n\nmore\n");
+        // a syllable composing in the tab being left
+        const std::string left = app.currentFile;
+        app.editorCursorPos = app.editorText.size();
+        FakeIme ime;
+        imeStartComposition(app, ime);
+        send(app, ime, COMP, L"\uB9D0");
+        app.openMode = m.mode;
+        tabOpenPath(app, app.hwnd, next, true, -1);
+        check(app.currentFile == next, where + "the new file is in front");
+        check(app.editMode && editorLiveOn(app) == m.live, where + "it opened in the editor's chosen view");
+        check(!app.ime.active, where + "no composition crossed into the new tab");
+        check(app.editorText.find(L"\uB9D0") == std::wstring::npos, where + "the new buffer has no stray syllable");
+        bool parked = false;
+        for (const auto& tab : app.tabs)
+            if (tab.path == left) parked = occurrences(tab.editorText, L"\uB9D0") == 1;
+        check(parked, where + "the tab left holds its syllable exactly once");
+        // the first key in the new tab composes inline at its caret
+        check(imeOwnsInput(app), where + "the editor owns IME input at once");
+        const size_t at = app.editorCursorPos;
+        const std::wstring before = app.editorText;
+        check(imeStartComposition(app, ime), where + "START is consumed");
+        check(send(app, ime, COMP, L"\uD558"), where + "COMPSTR is consumed");
+        check(app.editorText == before.substr(0, at) + L"\uD558" + before.substr(at),
+              where + "the composing syllable sits at the caret");
+        if (m.live) {
+            D2D1_POINT_2F start{};
+            float startHeight = 0;
+            check(liveTextClientPoint(app, app.ime.start, start, startHeight) && startHeight > 0,
+                  where + "the composing syllable has a place on Live's page");
+            check(liveText(app).text == app.editorText, where + "Live's text follows the splice");
+        }
+        check(send(app, ime, RESULT, L"", L"\uD55C"), where + "RESULTSTR is consumed");
+        imeEndComposition(app, ime);
+        check(app.editorText == before.substr(0, at) + L"\uD55C" + before.substr(at) && app.editorDirty,
+              where + "the committed syllable is in the text once");
+        check(!app.ime.active, where + "the transaction closed");
+    }
+    app.openMode = OPEN_READING;
+}
+
 // Another program changes the file while a syllable is composing (#311): the
 // watch must not reload the buffer under the open transaction
 void externalChangeWhileComposing(const std::string& dir) {
@@ -1001,6 +1058,7 @@ int main() {
     state.reset();
     saveAndTabSwitch(dir);
     externalChangeWhileComposing(dir);
+    openModeComposition(dir);
 
     for (const auto& c : caseAssertions)
         std::cout << "  case: " << c.first << " (" << c.second << " assertions)\n";

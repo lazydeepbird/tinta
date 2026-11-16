@@ -93,6 +93,26 @@ on/off.
 - MinGW Debug harness: 54/62 pass; the 8 failures are the known ones
   (`editor_context_selection` and `code_block_layout` pass serially).
 
+## Open mode and find bar (upstream v4.1.1)
+
+- Upstream v4.1.1 can open a Markdown file straight into Live or Source
+  (#322, `openMode=`). `ime_composition` gained the case "a file opened
+  straight into Live or Source composes inline": a syllable composing in one
+  tab, a second file opened with `openMode=live` and then `source`. The tab
+  left keeps its syllable exactly once, nothing crosses into the new tab, the
+  new tab is in the chosen view at once, and its first syllable composes at
+  the caret (in Live with a place on the page) and commits once.
+- Release build in an isolated folder: `openMode=live` with
+  `fixtures/korean-ime.md` opens on Live's page with the rail's pill on Live.
+  Hangul posted as WM_CHAR into the reading view's find bar (vim profile, `/`)
+  stands on the bar's line beside the count (#319). Screenshots under
+  `build/tinta-codex/smoke411-*/out/`.
+- Not checked: the Microsoft IME typed by hand into a file opened in Live, and
+  IME composition inside the find bar (it keeps the floating window).
+- MinGW Debug harness: 81/86 pass; the 5 failures are the known ones
+  (`ui_font_language`, `wrapped_cursor_navigation`, `image_cache_and_decode`,
+  `link_opening`, `plantuml_parser`).
+
 ## Limitations
 
 - Not yet built or tested with MSVC.
